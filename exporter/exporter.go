@@ -453,6 +453,7 @@ func NewRedisExporter(redisURI string, opts Options) (*Exporter, error) {
 		"instance_info":                                {txt: "Information about the Redis instance", lbls: []string{"role", "redis_version", "redis_build_id", "redis_mode", "os", "maxmemory_policy"}},
 		"key_group_count":                              {txt: `Count of keys in key group`, lbls: []string{"db", "key_group"}},
 		"key_group_memory_usage_bytes":                 {txt: `Total memory usage of key group in bytes`, lbls: []string{"db", "key_group"}},
+		"key_hash_field":                               {txt: `The value of hash "field" from "key"`, lbls: []string{"db", "key", "field"}},
 		"key_size":                                     {txt: `The length or size of "key"`, lbls: []string{"db", "key"}},
 		"key_value":                                    {txt: `The value of "key"`, lbls: []string{"db", "key"}},
 		"keys_count":                                   {txt: `Count of keys`, lbls: []string{"db", "key"}},
@@ -1104,9 +1105,24 @@ func (e *Exporter) extractCheckKeyMetrics(ch chan<- prometheus.Metric, c redis.C
 		dbLabel := "db" + k.db
 		e.registerConstMetricGauge(ch, "key_size", info.size, dbLabel, k.key)
 
-		// Only record value metric if value is float-y
-		if val, err := redis.Float64(doRedisCmd(c, "GET", k.key)); err == nil {
-			e.registerConstMetricGauge(ch, "key_value", val, dbLabel, k.key)
+		switch info.keyType {
+		case "string":
+			// Only record value metric if value is float-y
+			if val, err := redis.Float64(doRedisCmd(c, "GET", k.key)); err == nil {
+				e.registerConstMetricGauge(ch, "key_value", val, dbLabel, k.key)
+			}
+		case "hash":
+			if resp, err := redis.StringMap(doRedisCmd(c, "HGETALL", k.key)); err == nil {
+				for field, strval := range resp {
+					// Only record value metric if value is float-y
+					if val, err := strconv.ParseFloat(strval, 64); err == nil {
+						e.registerConstMetricGauge(ch, "key_hash_field", val, dbLabel, k.key, field)
+					}
+				}
+			}
+		default:
+			// Don't know what to do with anything else
+			continue
 		}
 	}
 }
